@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predictive Maintenance Dashboard</title>
+    
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <h1>Monitoring Mesin Real-Time</h1>
+
+    <!-- 1. KOTAK PERINGATAN -->
+    <div id="alert-box" class="alert-box normal-box">
+        ✅ STATUS: MESIN NORMAL ✅
+    </div>
+
+    <!-- 2. WADAH GRAFIK (Sekarang ada 2 grafik) -->
+    <div class="charts-wrapper">
+        <div class="chart-container" style="border-top-color: #1a73e8;">
+            <canvas id="vibrationChart"></canvas>
+        </div>
+        <div class="chart-container" style="border-top-color: #fbbc05;">
+            <canvas id="arusChart"></canvas>
+        </div>
+    </div>
+
+    <!-- 3. KARTU ANGKA (Sekarang ada 3 kartu) -->
+    <div class="dashboard-container">
+        <!-- Kartu RMS X -->
+        <div class="card">
+            <h3>Getaran Sumbu X</h3>
+            <div class="value" id="rms_x">0.0000</div>
+            <div class="unit">m/s²</div>
+        </div>
+
+        <!-- Kartu RMS Z -->
+        <div class="card">
+            <h3>Getaran Sumbu Z</h3>
+            <div class="value" id="rms_z">0.0000</div>
+            <div class="unit">m/s²</div>
+        </div>
+
+        <!-- Kartu Arus -->
+        <div class="card">
+            <h3>Arus Mesin</h3>
+            <div class="value" id="rms_arus" style="color: #fbbc05;">0.000</div>
+            <div class="unit">Ampere (A)</div>
+        </div>
+    </div>
+
+    <!-- Status Koneksi -->
+    <div class="status" id="status-koneksi">Menghubungkan ke server...</div>
+
+    <!-- Script Utama -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+        // Konfigurasi Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyDE4jEkz7tPQaqCbqy0ZmeojHYJCLAdPDI",
+            databaseURL: "https://esp-project1-28c0f-default-rtdb.asia-southeast1.firebasedatabase.app"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Referensi Elemen
+        const elRmsX = document.getElementById('rms_x');
+        const elRmsZ = document.getElementById('rms_z');
+        const elArus = document.getElementById('rms_arus');
+        const elStatus = document.getElementById('status-koneksi');
+        const elAlert = document.getElementById('alert-box');
+
+        // --- INISIALISASI GRAFIK GETARAN ---
+        const ctxVib = document.getElementById('vibrationChart').getContext('2d');
+        const vibrationChart = new Chart(ctxVib, {
+            type: 'line',
+            data: {
+                labels: [], 
+                datasets: [
+                    {
+                        label: 'RMS X (Horizontal)',
+                        borderColor: '#1a73e8', 
+                        backgroundColor: 'rgba(26, 115, 232, 0.1)',
+                        data: [], borderWidth: 2, tension: 0.4, fill: true
+                    },
+                    {
+                        label: 'RMS Z (Vertikal)',
+                        borderColor: '#dc3545', 
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        data: [], borderWidth: 2, tension: 0.4, fill: true
+                    }
+                ]
+            },
+            options: {
+                responsive: true, animation: false,
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Getaran (m/s²)' } } }
+            }
+        });
+
+        // --- INISIALISASI GRAFIK ARUS ---
+        const ctxArus = document.getElementById('arusChart').getContext('2d');
+        const arusChart = new Chart(ctxArus, {
+            type: 'line',
+            data: {
+                labels: [], 
+                datasets: [{
+                    label: 'Arus RMS',
+                    borderColor: '#fbbc05', // Kuning
+                    backgroundColor: 'rgba(251, 188, 5, 0.1)',
+                    data: [], borderWidth: 2, tension: 0.4, fill: true
+                }]
+            },
+            options: {
+                responsive: true, animation: false,
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Arus (Ampere)' } } }
+            }
+        });
+
+        const maxDataPoints = 20;
+
+        // --- MENDENGARKAN FOLDER UTAMA '/motor' ---
+        const motorRef = ref(db, 'motor');
+
+        onValue(motorRef, (snapshot) => {
+            const data = snapshot.val();
+            
+            if (data) {
+                // Ambil data dengan aman (cek apakah datanya ada)
+                const rmsXVal = data.vibrasi?.rms_x ? parseFloat(data.vibrasi.rms_x) : 0;
+                const rmsZVal = data.vibrasi?.rms_z ? parseFloat(data.vibrasi.rms_z) : 0;
+                const arusVal = data.arus?.rms ? parseFloat(data.arus.rms) : 0;
+
+                // Update Teks
+                elRmsX.innerText = rmsXVal.toFixed(4);
+                elRmsZ.innerText = rmsZVal.toFixed(4);
+                elArus.innerText = arusVal.toFixed(3);
+                elStatus.innerText = "🟢 Terhubung & Data Update";
+
+                // --- LOGIKA PERINGATAN (Getaran > 2 ATAU Arus > 3) ---
+                if (rmsXVal > 2 || rmsZVal > 2 || arusVal > 3.0) {
+                    elAlert.className = 'alert-box warning-box'; 
+                    elAlert.innerText = '⚠️ PERINGATAN: ANOMALI MESIN TERDETEKSI! ⚠️';
+                } else {
+                    elAlert.className = 'alert-box normal-box'; 
+                    elAlert.innerText = '✅ STATUS: MESIN NORMAL ✅';
+                }
+
+                // --- UPDATE GRAFIK ---
+                const waktuSekarang = new Date().toLocaleTimeString('id-ID', { hour12: false });
+                
+                vibrationChart.data.labels.push(waktuSekarang);
+                vibrationChart.data.datasets[0].data.push(rmsXVal);
+                vibrationChart.data.datasets[1].data.push(rmsZVal);
+
+                arusChart.data.labels.push(waktuSekarang);
+                arusChart.data.datasets[0].data.push(arusVal);
+
+                if (vibrationChart.data.labels.length > maxDataPoints) {
+                    vibrationChart.data.labels.shift();
+                    vibrationChart.data.datasets[0].data.shift();
+                    vibrationChart.data.datasets[1].data.shift();
+                    
+                    arusChart.data.labels.shift();
+                    arusChart.data.datasets[0].data.shift();
+                }
+                
+                vibrationChart.update();
+                arusChart.update();
+
+            } else {
+                elStatus.innerText = "🟡 Menunggu data dari ESP32...";
+            }
+        }, (error) => {
+            console.error("Error Firebase:", error);
+            elStatus.innerText = "🔴 Gagal terhubung ke database";
+            elStatus.style.color = "#dc3545";
+        });
+    </script>
+</body>
+</html>

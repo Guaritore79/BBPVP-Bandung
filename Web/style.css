@@ -1,0 +1,156 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f0f2f5;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+}
+
+h1 {
+    color: #1a73e8;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+/* --- KOTAK STATUS --- */
+.alert-box {
+    width: 100%;
+    max-width: 800px;
+    font-weight: bold;
+    font-size: 1.2rem;
+    padding: 15px 30px;
+    border-radius: 8px;
+    text-align: center;
+    margin-bottom: 25px;
+    transition: all 0.3s ease;
+    box-sizing: border-box;
+}
+
+.normal-box {
+    background-color: #28a745; 
+    color: white;
+    box-shadow: 0 4px 6px rgba(40, 167, 69, 0.3);
+}
+
+.warning-box {
+    background-color: #dc3545; 
+    color: white;
+    box-shadow: 0 4px 10px rgba(220, 53, 69, 0.4);
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.02); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* --- WADAH GRAFIK --- */
+.charts-wrapper {
+    width: 100%;
+    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px; /* Jarak antara grafik atas dan bawah */
+    margin-bottom: 30px;
+}
+
+.chart-container {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    border-top: 4px solid #1a73e8;
+    box-sizing: border-box;
+}
+
+/* --- WADAH ANGKA GETARAN & ARUS --- */
+.dashboard-container {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+    max-width: 800px;
+}
+
+.card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    flex: 1; 
+    min-width: 200px;
+    text-align: center;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    border-top: 4px solid #1a73e8;
+}
+
+/* Warna atas kartu khusus untuk Arus */
+.card:nth-child(3) {
+    border-top-color: #fbbc05;
+}
+
+.card h3 {
+    margin: 0 0 10px 0;
+    font-size: 1.1rem;
+    color: #5f6368;
+}
+
+.value {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #202124;
+    margin: 10px 0;
+}
+
+.unit {
+    font-size: 0.9rem;
+    color: #80868b;
+}
+
+/* --- STATUS KONEKSI --- */
+.status {
+    margin-top: 30px;
+    font-size: 0.9rem;
+    color: #28a745;
+    font-weight: 600;
+}
+
+/* --- MEDIA QUERIES UNTUK TAMPILAN MOBILE (HP) --- */
+@media screen and (max-width: 768px) {
+    body {
+        padding: 20px 10px; /* Kurangi jarak pinggir di layar kecil */
+    }
+
+    h1 {
+        font-size: 1.5rem; /* Perkecil judul */
+        margin-bottom: 15px;
+    }
+
+    .alert-box {
+        font-size: 1rem;
+        padding: 12px 20px;
+    }
+
+    /* Ubah arah susunan kartu dari menyamping jadi ke bawah */
+    .dashboard-container {
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .card {
+        width: 100%; /* Kartu memenuhi layar HP */
+        min-width: unset;
+        padding: 15px;
+    }
+
+    .value {
+        font-size: 2rem; /* Perkecil angka sedikit */
+    }
+
+    .chart-container {
+        padding: 15px;
+    }
+}
