@@ -15,6 +15,7 @@ SemaphoreHandle_t xVibrationMutex;
 SemaphoreHandle_t xCurrentMutex;
 SemaphoreHandle_t xI2CMutex;
 SemaphoreHandle_t xLaravelDataMutex;
+SemaphoreHandle_t xNetworkMutex;
 
 // Network and Firebase credentials
 #define WIFI_SSID "GTR"
@@ -149,7 +150,10 @@ void TaskMPUCode(void *pvParameters){
 
 void TaskFirebaseCode(void *pvParameters){
   for(;;){
-    app.loop();
+    if(xSemaphoreTake(xNetworkMutex, pdMS_TO_TICKS(50)) == pdTRUE){
+      app.loop();
+      xSemaphoreGive(xNetworkMutex);
+    }
     unsigned long currentMillis = millis();
 
     if (currentMillis - lastCalcTime >= calcInterval){
@@ -207,6 +211,7 @@ void TaskFirebaseCode(void *pvParameters){
 void TaskLaravelCode(void *pvParameters){
   WiFiClientSecure clientLaravel;
   clientLaravel.setInsecure();
+  clientLaravel.setHandshakeTimeout(10);
   for(;;){
     bool adaData = false;
     float rmsX = 0, rmsZ = 0, arus = 0;
@@ -223,30 +228,43 @@ void TaskLaravelCode(void *pvParameters){
     }
 
     if(adaData && WiFi.status() == WL_CONNECTED){
-      HTTPClient http;
-      http.begin(clientLaravel, serverUrl);
-      http.addHeader("User-Agent", "ESP32-Sensor");
+      if(xSemaphoreTake(xNetworkMutex, pdMS_TO_TICKS(2000)) == pdTRUE){
+        Serial.print("Free heap sebelum POST: ");
+        Serial.println(ESP.getFreeHeap());
 
-      StaticJsonDocument<200> jsonDoc;
-      jsonDoc["rms_x"] = rmsX;
-      jsonDoc["rms_z"] = rmsZ;
-      jsonDoc["arus"] = arus;
+        HTTPClient http;
+        bool beginOk = http.begin(clientLaravel, serverUrl);
+        Serial.print("http.begin() result: ");
+        Serial.println(beginOk ? "OK" : "FAILED");
 
-      String jsonString;
-      serializeJson(jsonDoc, jsonString);
+        http.addHeader("User-Agent", "ESP32-Sensor");
+        http.addHeader("ngrok-skip-browser-warning", "true");
+        http.setTimeout(10000); 
 
-      int httpResponseCode = http.POST(jsonString);
+        StaticJsonDocument<200> jsonDoc;
+        jsonDoc["rms_x"] = rmsX;
+        jsonDoc["rms_z"] = rmsZ;
+        jsonDoc["arus"] = arus;
 
-      if(httpResponseCode > 0){
-        Serial.print("Sukses kirim ke laravel kode: ");
+        String jsonString;
+        serializeJson(jsonDoc, jsonString);
+
+        int httpResponseCode = http.POST(jsonString);
+
+        Serial.print("HTTP Response Code: ");
         Serial.println(httpResponseCode);
-      } else {
-        Serial.print("Gagal kirim ke laravel, error: ");
-        Serial.println(httpResponseCode);
+
+        if(httpResponseCode > 0){
+          Serial.print("Sukses kirim ke laravel kode: ");
+          Serial.println(httpResponseCode);
+        } else {
+          Serial.print("Gagal kirim ke laravel, error: ");
+          Serial.println(httpResponseCode);
+        }
+        http.end();
+        xSemaphoreGive(xNetworkMutex);
       }
-      http.end();
     }
-
     vTaskDelay(100 / portTICK_PERIOD_MS); // cek data baru tiap 100ms
   }
 }
@@ -319,6 +337,12 @@ void setup(){
   } else {
     ads.setGain(GAIN_ONE); // Set rentang bacaan ke +/- 4.096V
     Serial.println("ADS1115 Siap!");
+  }
+
+  xNetworkMutex = xSemaphoreCreateMutex();
+  if(xNetworkMutex == NULL){
+    Serial.println("Failed to create network mutex");
+    ESP.restart();
   }
 
   xTaskCreatePinnedToCore(
