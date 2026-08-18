@@ -8,14 +8,10 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_ADS1X15.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
 
 SemaphoreHandle_t xVibrationMutex;
 SemaphoreHandle_t xCurrentMutex;
 SemaphoreHandle_t xI2CMutex;
-SemaphoreHandle_t xLaravelDataMutex;
-SemaphoreHandle_t xNetworkMutex;
 
 // Network and Firebase credentials
 #define WIFI_SSID "GTR"
@@ -25,8 +21,6 @@ SemaphoreHandle_t xNetworkMutex;
 #define DATABASE_URL "https://esp-project1-28c0f-default-rtdb.asia-southeast1.firebasedatabase.app"
 #define USER_EMAIL "tester1@gmai.com"
 #define USER_PASS "tester111"
-
-const char* serverUrl = "https://yo-yo-vantage-wish.ngrok-free.dev/api/sensor/kirim";
 
 #define I2c_SDA 17
 #define I2c_SCL 18
@@ -62,11 +56,6 @@ float sumSqZ = 0.0;
 int sampleCount = 0;
 
 float arusRMS_Global = 0.0;
-
-float g_rmsX = 0.0;
-float g_rmsZ = 0.0;
-float g_arus = 0.0;
-bool g_dataBaruTersedia = false;
 
 // Timer variables for sending data every 10 seconds
 unsigned long lastSendTime = 0;
@@ -150,10 +139,7 @@ void TaskMPUCode(void *pvParameters){
 
 void TaskFirebaseCode(void *pvParameters){
   for(;;){
-    if(xSemaphoreTake(xNetworkMutex, pdMS_TO_TICKS(50)) == pdTRUE){
-      app.loop();
-      xSemaphoreGive(xNetworkMutex);
-    }
+    app.loop();
     unsigned long currentMillis = millis();
 
     if (currentMillis - lastCalcTime >= calcInterval){
@@ -193,79 +179,10 @@ void TaskFirebaseCode(void *pvParameters){
           Database.set<float>(aClient, "/motor/vibrasi/rms_x", rmsX, processData, "Send_RMS_X");
           Database.set<float>(aClient, "/motor/vibrasi/rms_z", rmsZ, processData, "Send_RMS_Z");
           Database.set<float>(aClient, "/motor/arus/rms", localArus, processData, "Send_Arus");
-
-          if(xSemaphoreTake(xLaravelDataMutex, pdMS_TO_TICKS(10)) == pdTRUE){
-            g_rmsX = rmsX;
-            g_rmsZ = rmsZ;
-            g_arus = localArus;
-            g_dataBaruTersedia = true;
-            xSemaphoreGive(xLaravelDataMutex);
-          }
         }
       }
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
-  }
-}
-
-void TaskLaravelCode(void *pvParameters){
-  WiFiClientSecure clientLaravel;
-  clientLaravel.setInsecure();
-  clientLaravel.setHandshakeTimeout(10);
-  for(;;){
-    bool adaData = false;
-    float rmsX = 0, rmsZ = 0, arus = 0;
-
-    if(xSemaphoreTake(xLaravelDataMutex, pdMS_TO_TICKS(10)) == pdTRUE){
-      if(g_dataBaruTersedia){
-        rmsX = g_rmsX;
-        rmsZ = g_rmsZ;
-        arus = g_arus;
-        adaData = true;
-        g_dataBaruTersedia = false; // reset flag setelah diambil
-      }
-      xSemaphoreGive(xLaravelDataMutex);
-    }
-
-    if(adaData && WiFi.status() == WL_CONNECTED){
-      if(xSemaphoreTake(xNetworkMutex, pdMS_TO_TICKS(2000)) == pdTRUE){
-        Serial.print("Free heap sebelum POST: ");
-        Serial.println(ESP.getFreeHeap());
-
-        HTTPClient http;
-        bool beginOk = http.begin(clientLaravel, serverUrl);
-        Serial.print("http.begin() result: ");
-        Serial.println(beginOk ? "OK" : "FAILED");
-
-        http.addHeader("User-Agent", "ESP32-Sensor");
-        http.addHeader("ngrok-skip-browser-warning", "true");
-        http.setTimeout(10000); 
-
-        StaticJsonDocument<200> jsonDoc;
-        jsonDoc["rms_x"] = rmsX;
-        jsonDoc["rms_z"] = rmsZ;
-        jsonDoc["arus"] = arus;
-
-        String jsonString;
-        serializeJson(jsonDoc, jsonString);
-
-        int httpResponseCode = http.POST(jsonString);
-
-        Serial.print("HTTP Response Code: ");
-        Serial.println(httpResponseCode);
-
-        if(httpResponseCode > 0){
-          Serial.print("Sukses kirim ke laravel kode: ");
-          Serial.println(httpResponseCode);
-        } else {
-          Serial.print("Gagal kirim ke laravel, error: ");
-          Serial.println(httpResponseCode);
-        }
-        http.end();
-        xSemaphoreGive(xNetworkMutex);
-      }
-    }
-    vTaskDelay(100 / portTICK_PERIOD_MS); // cek data baru tiap 100ms
   }
 }
 
@@ -326,23 +243,11 @@ void setup(){
     ESP.restart();
   }
 
-  xLaravelDataMutex = xSemaphoreCreateMutex();
-  if(xLaravelDataMutex == NULL){
-    Serial.println("Failed to create Laravel data mutex");
-    ESP.restart();
-  }
-
   if (!ads.begin(0x48)) {
     Serial.println("Gagal menemukan ADS1115!");
   } else {
     ads.setGain(GAIN_ONE); // Set rentang bacaan ke +/- 4.096V
     Serial.println("ADS1115 Siap!");
-  }
-
-  xNetworkMutex = xSemaphoreCreateMutex();
-  if(xNetworkMutex == NULL){
-    Serial.println("Failed to create network mutex");
-    ESP.restart();
   }
 
   xTaskCreatePinnedToCore(
@@ -373,16 +278,6 @@ void setup(){
     1,                // Priority of the task
     &TaskFirebase,    // Task handle.
     0                 // Core where the task should run
-  );
-
-  xTaskCreatePinnedToCore(
-    TaskLaravelCode,
-    "TaskLaravel",
-    8192,
-    NULL,
-    1,
-    NULL,
-    0
   );
 
   Serial.println("");

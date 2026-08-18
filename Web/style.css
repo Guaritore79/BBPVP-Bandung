@@ -154,3 +154,38 @@ h1 {
         padding: 15px;
     }
 }
+
+.download-wrapper {
+    width: 100%;
+    max-width: 800px;
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    margin-top: 20px;
+    box-sizing: border-box;
+}
+
+.download-btn {
+    background-color: #1a73e8;
+    color: white;
+    border: none;
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.download-btn:hover {
+    background-color: #1557b0;
+}
+
+.download-hint {
+    font-size: 0.85rem;
+    color: #80868b;
+    margin-top: 10px;
+    margin-bottom: 0;
+}

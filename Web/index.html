@@ -7,6 +7,7 @@
     
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -53,7 +54,12 @@
 
     <!-- Status Koneksi -->
     <div class="status" id="status-koneksi">Menghubungkan ke server...</div>
-
+    <div class="download-wrapper">
+        <button id="btn-download" class="download-btn">
+            ⬇️ Download Data Excel (<span id="data-count">0</span> baris)
+        </button>
+        <p class="download-hint">*Biarkan halaman ini tetap terbuka untuk merekam lebih banyak data.</p>
+    </div>
     <!-- Script Utama -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -125,7 +131,9 @@
 
         // --- MENDENGARKAN FOLDER UTAMA '/motor' ---
         const motorRef = ref(db, 'motor');
-
+        const dataLog = [];
+        const elDataCount = document.getElementById('data-count');
+        const btnDownload = document.getElementById('btn-download');
         onValue(motorRef, (snapshot) => {
             const data = snapshot.val();
             
@@ -172,6 +180,15 @@
                 vibrationChart.update();
                 arusChart.update();
 
+                dataLog.push({
+                    waktu: new Date().toLocaleString('id-ID'),
+                    rms_x: rmsXVal.toFixed(4),
+                    rms_z: rmsZVal.toFixed(4),
+                    arus: arusVal.toFixed(3),
+                    anomali: (rmsXVal > 2 || rmsZVal > 2 || arusVal > 3.0) ? 1 : 0
+                });
+                elDataCount.innerText = dataLog.length;
+
             } else {
                 elStatus.innerText = "🟡 Menunggu data dari ESP32...";
             }
@@ -179,6 +196,29 @@
             console.error("Error Firebase:", error);
             elStatus.innerText = "🔴 Gagal terhubung ke database";
             elStatus.style.color = "#dc3545";
+        });
+
+        btnDownload.addEventListener('click', () => {
+            if (dataLog.length === 0) {
+                alert("Belum ada data terekam!");
+                return;
+            }
+        
+            const worksheet = XLSX.utils.json_to_sheet(dataLog);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Data Sensor");
+        
+            // Atur lebar kolom biar rapi
+            worksheet['!cols'] = [
+                { wch: 20 }, // waktu
+                { wch: 12 }, // rms_x
+                { wch: 12 }, // rms_z
+                { wch: 12 }, // arus
+                { wch: 10 }  // anomali
+            ];
+        
+            const namaFile = `dataset_motor_${Date.now()}.xlsx`;
+            XLSX.writeFile(workbook, namaFile);
         });
     </script>
 </body>
