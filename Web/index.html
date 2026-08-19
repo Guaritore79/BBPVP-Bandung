@@ -17,7 +17,7 @@
         ✅ STATUS: MESIN NORMAL ✅
     </div>
 
-    <!-- 2. WADAH GRAFIK (Sekarang ada 2 grafik) -->
+    <!-- 2. WADAH GRAFIK -->
     <div class="charts-wrapper">
         <div class="chart-container" style="border-top-color: #1a73e8;">
             <canvas id="vibrationChart"></canvas>
@@ -27,23 +27,26 @@
         </div>
     </div>
 
-    <!-- 3. KARTU ANGKA (Sekarang ada 3 kartu) -->
+    <!-- 3. KARTU ANGKA (X, Y, Z, Arus) -->
     <div class="dashboard-container">
-        <!-- Kartu RMS X -->
         <div class="card">
             <h3>Getaran Sumbu X</h3>
             <div class="value" id="rms_x">0.0000</div>
             <div class="unit">m/s²</div>
         </div>
 
-        <!-- Kartu RMS Z -->
+        <div class="card">
+            <h3>Getaran Sumbu Y</h3>
+            <div class="value" id="rms_y">0.0000</div>
+            <div class="unit">m/s²</div>
+        </div>
+
         <div class="card">
             <h3>Getaran Sumbu Z</h3>
             <div class="value" id="rms_z">0.0000</div>
             <div class="unit">m/s²</div>
         </div>
 
-        <!-- Kartu Arus -->
         <div class="card">
             <h3>Arus Mesin</h3>
             <div class="value" id="rms_arus" style="color: #fbbc05;">0.000</div>
@@ -53,6 +56,15 @@
 
     <!-- Status Koneksi -->
     <div class="status" id="status-koneksi">Menghubungkan ke server...</div>
+
+    <!-- Panel Rekaman Data -->
+    <div class="download-wrapper">
+        <button id="btn-record" class="download-btn">⏺ Mulai Rekam</button>
+        <button id="btn-download" class="download-btn download-btn-secondary" disabled>
+            ⬇️ Download CSV (<span id="data-count">0</span> baris)
+        </button>
+        <p class="download-hint" id="record-hint">Klik "Mulai Rekam" untuk mulai menyimpan data ke sesi rekaman.</p>
+    </div>
 
     <!-- Script Utama -->
     <script type="module">
@@ -70,12 +82,17 @@
 
         // Referensi Elemen
         const elRmsX = document.getElementById('rms_x');
+        const elRmsY = document.getElementById('rms_y');
         const elRmsZ = document.getElementById('rms_z');
         const elArus = document.getElementById('rms_arus');
         const elStatus = document.getElementById('status-koneksi');
         const elAlert = document.getElementById('alert-box');
+        const elDataCount = document.getElementById('data-count');
+        const elRecordHint = document.getElementById('record-hint');
+        const btnRecord = document.getElementById('btn-record');
+        const btnDownload = document.getElementById('btn-download');
 
-        // --- INISIALISASI GRAFIK GETARAN ---
+        // --- INISIALISASI GRAFIK GETARAN (X, Y, Z) ---
         const ctxVib = document.getElementById('vibrationChart').getContext('2d');
         const vibrationChart = new Chart(ctxVib, {
             type: 'line',
@@ -83,13 +100,19 @@
                 labels: [], 
                 datasets: [
                     {
-                        label: 'RMS X (Horizontal)',
+                        label: 'RMS X',
                         borderColor: '#1a73e8', 
                         backgroundColor: 'rgba(26, 115, 232, 0.1)',
                         data: [], borderWidth: 2, tension: 0.4, fill: true
                     },
                     {
-                        label: 'RMS Z (Vertikal)',
+                        label: 'RMS Y',
+                        borderColor: '#34a853',
+                        backgroundColor: 'rgba(52, 168, 83, 0.1)',
+                        data: [], borderWidth: 2, tension: 0.4, fill: true
+                    },
+                    {
+                        label: 'RMS Z',
                         borderColor: '#dc3545', 
                         backgroundColor: 'rgba(220, 53, 69, 0.1)',
                         data: [], borderWidth: 2, tension: 0.4, fill: true
@@ -110,7 +133,7 @@
                 labels: [], 
                 datasets: [{
                     label: 'Arus RMS',
-                    borderColor: '#fbbc05', // Kuning
+                    borderColor: '#fbbc05',
                     backgroundColor: 'rgba(251, 188, 5, 0.1)',
                     data: [], borderWidth: 2, tension: 0.4, fill: true
                 }]
@@ -123,6 +146,61 @@
 
         const maxDataPoints = 20;
 
+        // --- BATAS MAKSIMAL NORMAL MESIN (hasil mapping dari rekaman saat mesin dimainkan kecepatannya) ---
+        // Nilai di atas ini dianggap "getaran/arus berlebih" (di luar rentang kerja normal mesin).
+        // Sesuaikan angka ini kapan saja kalau nanti ada rekaman baru dengan kondisi berbeda.
+        const MAX_RMS_X = 5.96;
+        const MAX_RMS_Y = 5.22;
+        const MAX_RMS_Z = 3.44;
+        const MAX_ARUS  = 0.94;
+
+        // --- STATE REKAMAN DATA ---
+        let isRecording = false;
+        let recordLog = [];
+
+        btnRecord.addEventListener('click', () => {
+            if (!isRecording) {
+                // Mulai sesi rekaman baru
+                isRecording = true;
+                recordLog = [];
+                elDataCount.innerText = 0;
+                btnRecord.innerText = '⏹ Berhenti Rekam';
+                btnRecord.classList.add('recording-active');
+                btnDownload.disabled = true;
+                elRecordHint.innerText = '🔴 Sedang merekam data...';
+            } else {
+                // Berhenti rekam
+                isRecording = false;
+                btnRecord.innerText = '⏺ Mulai Rekam';
+                btnRecord.classList.remove('recording-active');
+                if (recordLog.length > 0) {
+                    btnDownload.disabled = false;
+                    elRecordHint.innerText = `Rekaman selesai: ${recordLog.length} baris siap diunduh.`;
+                } else {
+                    elRecordHint.innerText = 'Tidak ada data terekam pada sesi ini.';
+                }
+            }
+        });
+
+        btnDownload.addEventListener('click', () => {
+            if (recordLog.length === 0) {
+                alert("Belum ada data terekam!");
+                return;
+            }
+
+            const header = "waktu,rms_x,rms_y,rms_z,arus_ampere,anomali\n";
+            const rows = recordLog.map(row =>
+                `"${row.waktu}",${row.rms_x},${row.rms_y},${row.rms_z},${row.arus},${row.anomali}`
+            ).join("\n");
+            const csvContent = header + rows;
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `dataset_motor_${Date.now()}.csv`;
+            link.click();
+        });
+
         // --- MENDENGARKAN FOLDER UTAMA '/motor' ---
         const motorRef = ref(db, 'motor');
 
@@ -130,21 +208,25 @@
             const data = snapshot.val();
             
             if (data) {
-                // Ambil data dengan aman (cek apakah datanya ada)
                 const rmsXVal = data.vibrasi?.rms_x ? parseFloat(data.vibrasi.rms_x) : 0;
+                const rmsYVal = data.vibrasi?.rms_y ? parseFloat(data.vibrasi.rms_y) : 0;
                 const rmsZVal = data.vibrasi?.rms_z ? parseFloat(data.vibrasi.rms_z) : 0;
                 const arusVal = data.arus?.rms ? parseFloat(data.arus.rms) : 0;
 
                 // Update Teks
                 elRmsX.innerText = rmsXVal.toFixed(4);
+                elRmsY.innerText = rmsYVal.toFixed(4);
                 elRmsZ.innerText = rmsZVal.toFixed(4);
                 elArus.innerText = arusVal.toFixed(3);
                 elStatus.innerText = "🟢 Terhubung & Data Update";
 
-                // --- LOGIKA PERINGATAN (Getaran > 2 ATAU Arus > 3) ---
-                if (rmsXVal > 2 || rmsZVal > 2 || arusVal > 3.0) {
+                // --- LOGIKA PERINGATAN (berdasarkan batas mapping kecepatan maksimal mesin) ---
+                const lewatBatas = (rmsXVal > MAX_RMS_X || rmsYVal > MAX_RMS_Y || rmsZVal > MAX_RMS_Z || arusVal > MAX_ARUS);
+                const anomali = lewatBatas ? 1 : 0;
+
+                if (lewatBatas) {
                     elAlert.className = 'alert-box warning-box'; 
-                    elAlert.innerText = '⚠️ PERINGATAN: ANOMALI MESIN TERDETEKSI! ⚠️';
+                    elAlert.innerText = '⚠️ PERINGATAN: GETARAN BERLEBIH! ⚠️';
                 } else {
                     elAlert.className = 'alert-box normal-box'; 
                     elAlert.innerText = '✅ STATUS: MESIN NORMAL ✅';
@@ -155,7 +237,8 @@
                 
                 vibrationChart.data.labels.push(waktuSekarang);
                 vibrationChart.data.datasets[0].data.push(rmsXVal);
-                vibrationChart.data.datasets[1].data.push(rmsZVal);
+                vibrationChart.data.datasets[1].data.push(rmsYVal);
+                vibrationChart.data.datasets[2].data.push(rmsZVal);
 
                 arusChart.data.labels.push(waktuSekarang);
                 arusChart.data.datasets[0].data.push(arusVal);
@@ -164,6 +247,7 @@
                     vibrationChart.data.labels.shift();
                     vibrationChart.data.datasets[0].data.shift();
                     vibrationChart.data.datasets[1].data.shift();
+                    vibrationChart.data.datasets[2].data.shift();
                     
                     arusChart.data.labels.shift();
                     arusChart.data.datasets[0].data.shift();
@@ -171,6 +255,19 @@
                 
                 vibrationChart.update();
                 arusChart.update();
+
+                // --- SIMPAN KE REKAMAN, HANYA JIKA SEDANG MEREKAM ---
+                if (isRecording) {
+                    recordLog.push({
+                        waktu: new Date().toLocaleString('id-ID'),
+                        rms_x: rmsXVal.toFixed(4),
+                        rms_y: rmsYVal.toFixed(4),
+                        rms_z: rmsZVal.toFixed(4),
+                        arus: arusVal.toFixed(3),
+                        anomali: anomali
+                    });
+                    elDataCount.innerText = recordLog.length;
+                }
 
             } else {
                 elStatus.innerText = "🟡 Menunggu data dari ESP32...";

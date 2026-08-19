@@ -8,14 +8,10 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_ADS1X15.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
 
 SemaphoreHandle_t xVibrationMutex;
 SemaphoreHandle_t xCurrentMutex;
 SemaphoreHandle_t xI2CMutex;
-SemaphoreHandle_t xLaravelDataMutex;
-SemaphoreHandle_t xNetworkMutex;
 
 // Network and Firebase credentials
 #define WIFI_SSID "GTR"
@@ -26,10 +22,8 @@ SemaphoreHandle_t xNetworkMutex;
 #define USER_EMAIL "tester1@gmai.com"
 #define USER_PASS "tester111"
 
-const char* serverUrl = "https://yo-yo-vantage-wish.ngrok-free.dev/api/sensor/kirim";
-
-#define I2c_SDA 17
-#define I2c_SCL 18
+#define I2c_SDA 18
+#define I2c_SCL 17
 
 Adafruit_ADS1115 ads;
 Adafruit_MPU6050 mpu;
@@ -63,18 +57,46 @@ int sampleCount = 0;
 
 float arusRMS_Global = 0.0;
 
-float g_rmsX = 0.0;
-float g_rmsZ = 0.0;
-float g_arus = 0.0;
-bool g_dataBaruTersedia = false;
-
-// Timer variables for sending data every 10 seconds
-unsigned long lastSendTime = 0;
-float lastSentAngle = 0; // Menyimpan nilai sudut yang terakhir sukses dikirim
-const unsigned long sendInterval = 500; // 10 seconds in milliseconds
+// --- Offset kalibrasi (diisi otomatis saat setup) ---
+float offsetX = 0.0;
+float offsetY = 0.0;
+float offsetZ = 0.0;
 
 TaskHandle_t TaskMPU;
 TaskHandle_t TaskFirebase;
+
+// Membaca beberapa ratus sample saat sensor diam, lalu ambil rata-ratanya
+// sebagai offset. Ini menggantikan cara lama yang cuma mengurangi 9.81 dari Z,
+// supaya sumbu X dan Y juga terkoreksi dari efek kemiringan pemasangan sensor.
+void calibrateMPU(){
+  const int calibSamples = 200;
+  double sumX = 0, sumY = 0, sumZ = 0;
+  int count = 0;
+
+  Serial.println("Kalibrasi sensor dimulai, JANGAN disentuh/digoyang...");
+
+  for(int i = 0; i < calibSamples; i++){
+    sensors_event_t a, g, temp;
+    if(mpu.getEvent(&a, &g, &temp)){
+      sumX += a.acceleration.x;
+      sumY += a.acceleration.y;
+      sumZ += a.acceleration.z;
+      count++;
+    }
+    delay(5);
+  }
+
+  if(count > 0){
+    offsetX = sumX / count;
+    offsetY = sumY / count;
+    offsetZ = sumZ / count;
+  }
+
+  Serial.print("Offset X: "); Serial.println(offsetX, 4);
+  Serial.print("Offset Y: "); Serial.println(offsetY, 4);
+  Serial.print("Offset Z: "); Serial.println(offsetZ, 4);
+  Serial.println("Kalibrasi selesai.");
+}
 
 void TaskCurrentCode(void *pvParameters){
   for(;;){
@@ -131,9 +153,10 @@ void TaskMPUCode(void *pvParameters){
       }
 
       if(ok){
-        float ax = a.acceleration.x;
-        float ay = a.acceleration.y;
-        float az = a.acceleration.z - 9.81; // Mengurangi gaya gravitasi
+        // Pakai offset hasil kalibrasi, bukan angka tetap 9.81
+        float ax = a.acceleration.x - offsetX;
+        float ay = a.acceleration.y - offsetY;
+        float az = a.acceleration.z - offsetZ;
 
         if(xSemaphoreTake(xVibrationMutex, pdMS_TO_TICKS(10)) == pdTRUE){
           sumSqX += (ax * ax);
@@ -150,20 +173,18 @@ void TaskMPUCode(void *pvParameters){
 
 void TaskFirebaseCode(void *pvParameters){
   for(;;){
-    if(xSemaphoreTake(xNetworkMutex, pdMS_TO_TICKS(50)) == pdTRUE){
-      app.loop();
-      xSemaphoreGive(xNetworkMutex);
-    }
+    app.loop();
     unsigned long currentMillis = millis();
 
     if (currentMillis - lastCalcTime >= calcInterval){
       lastCalcTime = currentMillis;
 
-      float localSumX = 0, localSumZ = 0;
+      float localSumX = 0, localSumY = 0, localSumZ = 0;
       int localCount = 0;
 
       if (xSemaphoreTake(xVibrationMutex, portMAX_DELAY) == pdTRUE) {
         localSumX = sumSqX;
+        localSumY = sumSqY;
         localSumZ = sumSqZ;
         localCount = sampleCount;
 
@@ -172,7 +193,6 @@ void TaskFirebaseCode(void *pvParameters){
         sumSqZ = 0;
         sampleCount = 0;
 
-        // 6. LEPASKAN MUTEX
         xSemaphoreGive(xVibrationMutex); 
       }
 
@@ -183,89 +203,23 @@ void TaskFirebaseCode(void *pvParameters){
           xSemaphoreGive(xCurrentMutex);
         }
         float rmsX = sqrt(localSumX / localCount);
+        float rmsY = sqrt(localSumY / localCount);
         float rmsZ = sqrt(localSumZ / localCount);
 
         Serial.print("RMS Getaran -> X: "); Serial.print(rmsX, 4);
+        Serial.print(" | Y: "); Serial.print(rmsY, 4);
         Serial.print(" | Z: "); Serial.println(rmsZ, 4);
         Serial.print(" || Arus RMS: "); Serial.println(localArus, 3);
 
         if (app.ready()){
           Database.set<float>(aClient, "/motor/vibrasi/rms_x", rmsX, processData, "Send_RMS_X");
+          Database.set<float>(aClient, "/motor/vibrasi/rms_y", rmsY, processData, "Send_RMS_Y");
           Database.set<float>(aClient, "/motor/vibrasi/rms_z", rmsZ, processData, "Send_RMS_Z");
           Database.set<float>(aClient, "/motor/arus/rms", localArus, processData, "Send_Arus");
-
-          if(xSemaphoreTake(xLaravelDataMutex, pdMS_TO_TICKS(10)) == pdTRUE){
-            g_rmsX = rmsX;
-            g_rmsZ = rmsZ;
-            g_arus = localArus;
-            g_dataBaruTersedia = true;
-            xSemaphoreGive(xLaravelDataMutex);
-          }
         }
       }
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
-  }
-}
-
-void TaskLaravelCode(void *pvParameters){
-  WiFiClientSecure clientLaravel;
-  clientLaravel.setInsecure();
-  clientLaravel.setHandshakeTimeout(10);
-  for(;;){
-    bool adaData = false;
-    float rmsX = 0, rmsZ = 0, arus = 0;
-
-    if(xSemaphoreTake(xLaravelDataMutex, pdMS_TO_TICKS(10)) == pdTRUE){
-      if(g_dataBaruTersedia){
-        rmsX = g_rmsX;
-        rmsZ = g_rmsZ;
-        arus = g_arus;
-        adaData = true;
-        g_dataBaruTersedia = false; // reset flag setelah diambil
-      }
-      xSemaphoreGive(xLaravelDataMutex);
-    }
-
-    if(adaData && WiFi.status() == WL_CONNECTED){
-      if(xSemaphoreTake(xNetworkMutex, pdMS_TO_TICKS(2000)) == pdTRUE){
-        Serial.print("Free heap sebelum POST: ");
-        Serial.println(ESP.getFreeHeap());
-
-        HTTPClient http;
-        bool beginOk = http.begin(clientLaravel, serverUrl);
-        Serial.print("http.begin() result: ");
-        Serial.println(beginOk ? "OK" : "FAILED");
-
-        http.addHeader("User-Agent", "ESP32-Sensor");
-        http.addHeader("ngrok-skip-browser-warning", "true");
-        http.setTimeout(10000); 
-
-        StaticJsonDocument<200> jsonDoc;
-        jsonDoc["rms_x"] = rmsX;
-        jsonDoc["rms_z"] = rmsZ;
-        jsonDoc["arus"] = arus;
-
-        String jsonString;
-        serializeJson(jsonDoc, jsonString);
-
-        int httpResponseCode = http.POST(jsonString);
-
-        Serial.print("HTTP Response Code: ");
-        Serial.println(httpResponseCode);
-
-        if(httpResponseCode > 0){
-          Serial.print("Sukses kirim ke laravel kode: ");
-          Serial.println(httpResponseCode);
-        } else {
-          Serial.print("Gagal kirim ke laravel, error: ");
-          Serial.println(httpResponseCode);
-        }
-        http.end();
-        xSemaphoreGive(xNetworkMutex);
-      }
-    }
-    vTaskDelay(100 / portTICK_PERIOD_MS); // cek data baru tiap 100ms
   }
 }
 
@@ -277,7 +231,7 @@ void setup(){
 
   Serial.println("Adafruit MPU6050 test!");
 
-  if (!mpu.begin()) {
+  if (!mpu.begin(0x68, &Wire)) {
     Serial.println("Failed to find MPU6050 chip");
     while (1) {
       delay(10);
@@ -288,6 +242,8 @@ void setup(){
   mpu.setAccelerometerRange(MPU6050_RANGE_4_G); // Sangat sensitif untuk kemiringan halus
   mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);   // Menyaring getaran agar servo tidak gemetar
 
+  // Kalibrasi offset sumbu X, Y, Z - PASTIKAN mesin/sensor diam saat ini
+  calibrateMPU();
 
   // Connect to Wi-Fi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -326,23 +282,11 @@ void setup(){
     ESP.restart();
   }
 
-  xLaravelDataMutex = xSemaphoreCreateMutex();
-  if(xLaravelDataMutex == NULL){
-    Serial.println("Failed to create Laravel data mutex");
-    ESP.restart();
-  }
-
   if (!ads.begin(0x48)) {
     Serial.println("Gagal menemukan ADS1115!");
   } else {
     ads.setGain(GAIN_ONE); // Set rentang bacaan ke +/- 4.096V
     Serial.println("ADS1115 Siap!");
-  }
-
-  xNetworkMutex = xSemaphoreCreateMutex();
-  if(xNetworkMutex == NULL){
-    Serial.println("Failed to create network mutex");
-    ESP.restart();
   }
 
   xTaskCreatePinnedToCore(
@@ -373,16 +317,6 @@ void setup(){
     1,                // Priority of the task
     &TaskFirebase,    // Task handle.
     0                 // Core where the task should run
-  );
-
-  xTaskCreatePinnedToCore(
-    TaskLaravelCode,
-    "TaskLaravel",
-    8192,
-    NULL,
-    1,
-    NULL,
-    0
   );
 
   Serial.println("");
